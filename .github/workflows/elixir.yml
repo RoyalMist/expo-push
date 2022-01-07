@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags:
+      - "*"
+  pull_request:
+    branches: [master]
+
+env:
+  ELIXIR_VERSION: 1.13
+  OTP_VERSION: 24.1
+  MIX_ENV: test
+
+jobs:
+  test-dependencies:
+    name: Dependencies
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Elixir Setup
+        uses: erlef/setup-elixir@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - name: Retrieve Cached Dependencies
+        uses: actions/cache@v2
+        id: mix-test-cache
+        with:
+          path: |
+            deps
+            _build
+          key: test-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
+      - name: Install Dependencies
+        if: steps.mix-test-cache.outputs.cache-hit != 'true'
+        run: mix do deps.get, deps.compile
+      - name: Retrieve Cached PLT
+        uses: actions/cache@v2
+        id: mix-plt-cache
+        with:
+          path: |
+            priv/plts
+          key: plt-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
+      - name: Install PLT
+        if: steps.mix-plt-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p priv/plts
+          mix dialyzer --plt
+
+  analysis:
+    name: Static Code Analysis
+    needs: test-dependencies
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Setup
+        uses: erlef/setup-elixir@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - name: Retrieve Cached Dependencies
+        uses: actions/cache@v2
+        id: mix-test-cache
+        with:
+          path: |
+            deps
+            _build
+          key: test-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
+      - name: Retrieve Cached PLT
+        uses: actions/cache@v2
+        id: mix-plt-cache
+        with:
+          path: |
+            priv/plts
+          key: plt-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
+      - name: Check Code Format
+        run: mix format --check-formatted
+      - name: Run Credo
+        run: mix credo
+      - name: Run Dialyzer
+        run: mix dialyzer --no-check --format dialyxir --ignore-exit-status
+      - name: Run Sobelow
+        run: mix sobelow
+
+  tests:
+    name: Unit Tests
+    needs: test-dependencies
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Setup
+        uses: erlef/setup-elixir@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - name: Retrieve Cached Dependencies
+        uses: actions/cache@v2
+        id: mix-test-cache
+        with:
+          path: |
+            deps
+            _build
+          key: test-${{ env.ELIXIR_VERSION }}-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
+      - name: Run test
+        run: mix test --trace --slowest 10
+
+  publish:
+    if: ${{ contains(github.ref, 'refs/tags/') }}
+    name: Publish to HEX
+    needs:
+      - analysis
+      - tests
+    runs-on: ubuntu-20.04
+    env:
+      MIX_ENV: prod
+    steps:
+      - name: Tag
+        id: tagName
+        uses: olegtarasov/get-tag@v2.1
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Setup
+        uses: erlef/setup-elixir@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - name: Set version
+        run: |
+          sed -i 's/version: "[0-9]\.[0-9]\.[0-9]"/version: "${{ steps.tagName.outputs.tag }}"/g' mix.exs
+      - name: Commit version
+        uses: EndBug/add-and-commit@v7
+        with:
+          add: "mix.exs"
+          message: "Bump to version ${{ steps.tagName.outputs.tag }}"
+          branch: master
+          pathspec_error_handling: ignore
+          pull: "NO-PULL"
+      - name: Install Backend Dependencies
+        run: mix do deps.get --only prod, deps.compile
+      - name: Build
+        run: mix compile
+      - name: Publish
+        run: HEX_API_KEY=${{secrets.HEX_API_KEY}} mix hex.publish --yes
