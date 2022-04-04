@@ -2,11 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     tags:
       - "*"
   pull_request:
-    branches: [master]
+    branches: [main]
 
 env:
   ELIXIR_VERSION: 1.13
@@ -150,6 +150,6 @@ jobs:
         with:
           add: "mix.exs"
           message: "Bump to version ${{ steps.tagName.outputs.tag }}"
-          branch: master
+          branch: main
           pathspec_error_handling: ignore
           pull: "NO-PULL"
