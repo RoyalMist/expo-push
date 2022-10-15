@@ -34,7 +34,9 @@ defmodule ExpoPush.MixProject do
 
   defp deps do
     [
-      {:httpoison, "~> 1.8"},
+      {:tesla, "~> 1.4"},
+      {:hackney, "~> 1.18"},
+      {:jason, "~> 1.4"},
       {:ex_doc, "~> 0.26", runtime: false},
       {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.1", only: [:dev, :test], runtime: false},
